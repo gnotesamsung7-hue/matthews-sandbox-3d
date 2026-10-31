@@ -153,7 +153,7 @@ body.ctrl #title{display:none}
     <canvas id="c" aria-label="Matthew's Sandbox 3D world"></canvas>
     <div id="bubbles"></div>
     <div id="title">Matthew’s Sandbox 3D</div>
-    <div id="top"><button class="pb" id="bGames">Games</button><button class="pb" id="bStage">Stage</button><button class="pb" id="bSound">Sound: on</button><button class="pb" id="bClear">Clear</button></div>
+    <div id="top"><button class="pb" id="bVR" title="Play in VR on Meta Quest">VR</button><button class="pb" id="bGames">Games</button><button class="pb" id="bStage">Stage</button><button class="pb" id="bSound">Sound: on</button><button class="pb" id="bClear">Clear</button></div>
     <div id="toast"></div>
     <div id="camBox">
       <button class="pb" data-cam="l" aria-label="Turn left">&#8634;</button><button class="pb" data-cam="up" aria-label="Look down from higher">^</button><button class="pb" data-cam="r" aria-label="Turn right">&#8635;</button>
@@ -420,7 +420,7 @@ function giantImg(step,roar){ const c=cv(38,52), g="#3fae49", d="#2a7a33", bl="#
 const VOX=0.045;                       // metres per pixel
 const canvas=document.getElementById('c');
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
-renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap; renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); renderer.xr.enabled=true; renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap; renderer.outputEncoding=THREE.sRGBEncoding;
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(50,1,0.1,500);
 const hemi=new THREE.HemisphereLight(0xffffff,0x8a7a6a,0.75); scene.add(hemi);
@@ -635,8 +635,10 @@ function machineTick(now){ if(!machAnim||!machine) return; const k=Math.floor((n
 
 // ---------- picking, tools and the camera ----------
 const ray=new THREE.Raycaster(), ndc=new THREE.Vector2();
-function hitAt(cx,cy){ const r=canvas.getBoundingClientRect(); ndc.set(((cx-r.left)/r.width)*2-1,-((cy-r.top)/r.height)*2+1); ray.setFromCamera(ndc,camera); const h=ray.intersectObjects(pick3,false); return h[0]||null; }
-function groundAt(cx,cy){ const h=hitAt(cx,cy); if(h) return h.point; const r=canvas.getBoundingClientRect(); ndc.set(((cx-r.left)/r.width)*2-1,-((cy-r.top)/r.height)*2+1); ray.setFromCamera(ndc,camera); const p=new THREE.Vector3(); return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),0),p)?p:null; }
+let xrRay=null;
+function aimRay(cx,cy){ if(xrRay){ ray.set(xrRay.o,xrRay.d); return; } const r=canvas.getBoundingClientRect(); ndc.set(((cx-r.left)/r.width)*2-1,-((cy-r.top)/r.height)*2+1); ray.setFromCamera(ndc,camera); }
+function hitAt(cx,cy){ aimRay(cx,cy); const h=ray.intersectObjects(pick3,false); return h[0]||null; }
+function groundAt(cx,cy){ const h=hitAt(cx,cy); if(h) return h.point; aimRay(cx,cy); const p=new THREE.Vector3(); return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),0),p)?p:null; }
 let mode={kind:'tool',id:'drag'}, drag=null;
 const mouseBody=new CANNON.Body({mass:0}); mouseBody.collisionFilterGroup=0; mouseBody.collisionFilterMask=0; world.addBody(mouseBody);
 function startDrag(h){ const o=h.object.userData.body.userData; if(!o||o.body.mass===0) return false; const b=o.body, p=h.point;
@@ -703,7 +705,6 @@ function frame(now){
   objs.forEach(o=>{ const b=o.body, m=o.mesh; m.position.set(b.position.x,b.position.y,b.position.z); m.quaternion.set(b.quaternion.x,b.quaternion.y,b.quaternion.z,b.quaternion.w); });
   stepParts(); if(flash&&flash.intensity>0) flash.intensity=Math.max(0,flash.intensity-0.25);
   updateCamera(); renderer.render(scene,camera); placeBubbles();
-  requestAnimationFrame(frame);
 }
 
 // ============ 3D part 2: weapons, control pad, zombies ============
@@ -1244,6 +1245,122 @@ const _tap2=tapAt; tapAt=function(cx,cy){ const h=hitAt(cx,cy), ud=h?h.object.us
     if(mode.id==='drag') return; }
   _tap2(cx,cy); };
 
+// ============ VR on Meta Quest (WebXR) ============
+const rig=new THREE.Group(); scene.add(rig);
+let xrOn=false, xrSession=null, vrT=0, vrStatus='Welcome to VR!', vrTags=0, vrWave=false;
+const _p3=new THREE.Vector3(), _q3=new THREE.Quaternion(), _d3=new THREE.Vector3();
+const VRP={vr:true};
+function haptic(h,amt,ms){ try{ const a=h.src&&h.src.gamepad&&h.src.gamepad.hapticActuators; if(a&&a[0]) a[0].pulse(amt,ms); }catch(e){} }
+const handsV=[0,1].map(i=>{ const grip=renderer.xr.getControllerGrip(i), ctl=renderer.xr.getController(i); rig.add(grip); rig.add(ctl);
+  const glove=new THREE.Group(); boxM(0.08,0.045,0.11,'#ffd23f',0,0,0.03,glove); for(let k=0;k<4;k++) boxM(0.016,0.03,0.05,'#ffd23f',-0.03+k*0.02,0.005,-0.045,glove); boxM(0.02,0.03,0.04,'#ffd23f',0.05,0,0.0,glove); boxM(0.085,0.05,0.03,'#ff6b4a',0,0,0.09,glove); grip.add(glove);
+  const body=new CANNON.Body({mass:0,type:CANNON.Body.KINEMATIC}); body.addShape(new CANNON.Sphere(0.06)); world.addBody(body);
+  const h={i,grip,ctl,glove,body,src:null,handed:i===0?'left':'right',held:null,prev:new THREE.Vector3(),vel:new THREE.Vector3(),btn:{},laser:null};
+  ctl.addEventListener('connected',e=>{ h.src=e.data; h.handed=e.data.handedness||h.handed; });
+  ctl.addEventListener('disconnected',()=>{ h.src=null; }); return h; });
+const handOf=w=>handsV.find(h=>h.handed===w)||handsV[w==='left'?0:1];
+// laser pointer for the right hand
+const laserMat=new THREE.MeshBasicMaterial({color:'#5ff5c8',transparent:true,opacity:0.8});
+const laser=new THREE.Mesh(new THREE.BoxGeometry(0.004,0.004,1),laserMat); laser.position.z=-0.5; laser.visible=false;
+const reticle=new THREE.Mesh(new THREE.SphereGeometry(0.04,10,8),new THREE.MeshBasicMaterial({color:'#ffd23f'})); reticle.visible=false; scene.add(reticle);
+// ---------- wrist menu ----------
+const MC=document.createElement('canvas'); window.__vrMenuCanvas=MC; MC.width=512; MC.height=384; const mctx=MC.getContext('2d'); const mtex=new THREE.CanvasTexture(MC); mtex.encoding=THREE.sRGBEncoding;
+const menu=new THREE.Mesh(new THREE.PlaneGeometry(0.28,0.21),new THREE.MeshBasicMaterial({map:mtex})); menu.position.set(0,0.07,0.02); menu.rotation.x=-Math.PI*0.32; menu.visible=true;
+let vrPage='tools', vrHover=-1, menuDirty=true, vrBtns=[];
+const VR_TABS=[['tools','Tools'],['people','People'],['things','Things'],['weapons','Weapons'],['rides','Rides'],['stage','Stage'],['more','More']];
+function vrButtons(){ const is=(k,i)=>mode.kind===k&&mode.id===i, L=[];
+  if(vrPage==='tools') [["drag","Drag"],["poke","Poke"],["boom","Boom"],["heal","Heal"],["del","Delete"],["grow","Grow"],["shrink","Shrink"],["copy","Copy"]].forEach(([k,n])=>L.push({label:n,img:icon(k),on:is('tool',k),act:()=>pickMode('tool',k)}));
+  if(vrPage==='tools'&&(mode.id==='grow'||mode.id==='shrink')) [2,10,100,1000].forEach(k=>L.push({label:'x'+k,on:growK===k,act:()=>{ growK=k; vrSay(`Grow and Shrink: x${k}`); }}));
+  if(vrPage==='people'){ L.push({label:'Random',img:icon('dice'),on:is('char','random'),act:()=>pickMode('char','random')},{label:'Dummy',img:headImg(dummySpec(),'n'),on:is('char','dummy'),act:()=>pickMode('char','dummy')},{label:'Ninja',img:headImg(ninjaSpec(),'n'),on:is('char','ninja'),act:()=>pickMode('char','ninja')},{label:'Zombie',img:headImg(ZSPEC,'n'),on:is('char','zombie'),act:()=>pickMode('char','zombie')},{label:'King',img:headImg(ZKING,'n'),on:is('char','king'),act:()=>pickMode('char','king')}); chars.slice(0,7).forEach((sp,k)=>L.push({label:String(sp.name).slice(0,8),img:headImg(sp,'n'),on:is('char',String(k)),act:()=>pickMode('char',String(k))})); }
+  if(vrPage==='things') Object.keys(ITEM3).forEach(k=>L.push({label:ITEM3[k].n.split(' ')[0],img:itemImg(k,0.95),on:is('item',k),act:()=>pickMode('item',k)}));
+  if(vrPage==='weapons') Object.keys(WEAP3).forEach(k=>L.push({label:WEAP3[k].n.split(' ')[0],img:weaponImg(k),on:is('weapon',k),act:()=>pickMode('weapon',k)}));
+  if(vrPage==='rides') [['car','Car'],['truck','Truck'],['drone','Drone']].forEach(([k,n])=>L.push({label:n,on:is('ride',k),act:()=>pickMode('ride',k)}));
+  if(vrPage==='stage') STAGES3.forEach((S0,i)=>{ if(!S0.hidden) L.push({label:S0.name.split(' ')[0],on:stage3===i,act:()=>{ setStage3(i,true); placeRig(); vrSay(`Welcome to ${S0.name}!`); }}); });
+  if(vrPage==='more'){ L.push({label:'Zombies!',act:()=>startVrWave()},{label:'Clear',act:()=>{ clearAll(); vrWave=false; vrSay('All clear'); }},{label:'Machine',act:()=>{ if(machine) pullMachine(); else vrSay('The machine is in the Lab'); }},{label:'Start pos',act:()=>placeRig()},{label:'Sound',on:!muted,act:()=>{ muted=!muted; }},{label:'Exit VR',act:()=>{ if(xrSession) xrSession.end(); }}); }
+  return L.slice(0,12); }
+function drawMenu(){ const x=mctx; x.fillStyle='#fff7e6'; x.fillRect(0,0,512,384); x.strokeStyle='#2a2233'; x.lineWidth=6; x.strokeRect(3,3,506,378);
+  x.font='bold 15px monospace'; x.textAlign='center'; x.textBaseline='middle';
+  VR_TABS.forEach(([k,n],i)=>{ const bx=6+i*71.4; x.fillStyle=vrPage===k?'#ffd23f':'#ffeccc'; x.fillRect(bx,6,68,44); x.strokeStyle='#2a2233'; x.lineWidth=3; x.strokeRect(bx,6,68,44); x.fillStyle='#2a2233'; x.fillText(n,bx+34,28); });
+  vrBtns=vrButtons(); vrBtns.forEach((b,k)=>{ const cx=10+(k%4)*124, cy=58+Math.floor(k/4)*92; b.rect=[cx,cy,118,86]; x.fillStyle=b.on?'#ffd23f':k===vrHover?'#ffe9a8':'#ffffff'; x.fillRect(cx,cy,118,86); x.strokeStyle='#2a2233'; x.lineWidth=3; x.strokeRect(cx,cy,118,86);
+    if(b.img){ x.imageSmoothingEnabled=false; const s=Math.min(70/b.img.width,48/b.img.height); x.drawImage(b.img,cx+59-b.img.width*s/2,cy+30-b.img.height*s/2,b.img.width*s,b.img.height*s); x.fillStyle='#2a2233'; x.font='bold 15px monospace'; x.fillText(b.label,cx+59,cy+72); }
+    else { x.fillStyle='#2a2233'; x.font='bold 20px monospace'; x.fillText(b.label,cx+59,cy+43); } });
+  x.fillStyle='#2a2233'; x.fillRect(6,340,500,38); x.fillStyle='#ffffff'; x.font='bold 16px monospace'; x.fillText(vrStatus.slice(0,46),256,359); mtex.needsUpdate=true; menuDirty=false; }
+function menuClick(px,py){ if(py<52){ const i=Math.floor((px-6)/71.4); if(VR_TABS[i]){ vrPage=VR_TABS[i][0]; sfx('click'); menuDirty=true; } return; } const b=vrBtns.find(b=>b.rect&&px>=b.rect[0]&&px<=b.rect[0]+b.rect[2]&&py>=b.rect[1]&&py<=b.rect[1]+b.rect[3]); if(b){ b.act(); sfx('click'); menuDirty=true; } }
+function vrSay(t){ vrStatus=t; menuDirty=true; }
+const _toast3=toast; toast=function(t){ _toast3(t); if(xrOn) vrSay(t); };
+// ---------- grabbing and holding ----------
+const Q_VGUN=new CANNON.Quaternion(); Q_VGUN.setFromAxisAngle(new CANNON.Vec3(0,1,0),Math.PI/2);
+const Q_VMEL=new CANNON.Quaternion(); Q_VMEL.setFromAxisAngle(new CANNON.Vec3(1,0,0),-Math.PI/3);
+function vrGrab(h){ const hp=h.body.position; let best=null,bd=0.22;
+  objs.forEach(o=>{ const b=o.body; if(b.mass===0&&o.kind!=='weapon') return; if(o.dead||handsV.some(x=>x.held&&x.held.o===o)) return; const d=b.position.vsub(hp).norm()-(b.boundingRadius||0.2)*0.6; if(d<bd){ bd=d; best=o; } });
+  if(!best){ haptic(h,0.1,30); return; }
+  const o=best, b=o.body; h.body.collisionResponse=false; haptic(h,0.5,40); sfx('click');
+  if(o.kind==='weapon'){ if(o.holder) detach3(o.holder); const W0=WEAP3[o.wk], im=weaponImg(o.wk), wq=h.body.quaternion.mult(W0.gun?Q_VGUN:Q_VMEL), g=new CANNON.Vec3((W0.grip[0]+0.5-im.width/2)*WS,(im.height/2-W0.grip[1]-0.5)*WS,0);
+    b.quaternion.copy(wq); b.position.copy(hp.vsub(wq.vmult(g))); b.collisionResponse=false; const c=new CANNON.LockConstraint(h.body,b,{maxForce:1e5}); world.addConstraint(c); h.held={o,c,weapon:true}; vrSay(`${W0.n}! ${W0.gun?'Pull the trigger to shoot':'Swing it!'}`); return; }
+  const local=b.quaternion.inverse().vmult(hp.vsub(b.position)); const c=new CANNON.PointToPointConstraint(h.body,new CANNON.Vec3(0,0,0),b,local,o.rag?1500:500+b.mass*50); world.addConstraint(c); h.held={o,c};
+  if(o.rag) say(o.rag,pick(['Wheee!','Put me down!','Hehe!']),900,true); }
+function vrRelease(h){ if(!h.held) return; world.removeConstraint(h.held.c); if(h.held.weapon) h.held.o.body.collisionResponse=true; h.held=null; setTimeout(()=>{ h.body.collisionResponse=true; },200); }
+// ---------- laser actions ----------
+let laserDrag=null;
+function handRay(h){ h.ctl.getWorldPosition(_p3); h.ctl.getWorldQuaternion(_q3); _d3.set(0,0,-1).applyQuaternion(_q3); return {o:_p3.clone(),d:_d3.clone()}; }
+function triggerDown(h){ if(h.held&&h.held.weapon){ const W0=WEAP3[h.held.o.wk]; if(W0.gun){ useWeapon3(h.held.o); haptic(h,0.7,60); } return; }
+  if(h.handed!=='right') return; const R0=handRay(h); ray.set(R0.o,R0.d);
+  if(menu.visible){ const mh=ray.intersectObject(menu,false)[0]; if(mh){ menuClick(mh.uv.x*512,(1-mh.uv.y)*384); haptic(h,0.3,20); return; } }
+  xrRay=R0; const hit=hitAt(0,0);
+  if(hit&&(hit.object.userData.car||hit.object.userData.drone)&&(mode.id==='poke'||mode.id==='control')){ xrRay=null; vrSay('Drive cars and drones outside VR for now'); return; }
+  if(mode.kind==='tool'&&mode.id==='drag'){ if(hit&&hit.object.userData.body&&hit.object.userData.body.userData&&hit.object.userData.body.mass>0){ const b=hit.object.userData.body, o=b.userData, p=hit.point, local=b.quaternion.inverse().vmult(new CANNON.Vec3(p.x,p.y,p.z).vsub(b.position)); mouseBody.position.set(p.x,p.y,p.z);
+      const c=new CANNON.PointToPointConstraint(b,local,mouseBody,new CANNON.Vec3(0,0,0),o.rag?800:400+b.mass*60); world.addConstraint(c); laserDrag={c,b,o,dist:R0.o.distanceTo(p)}; drag={c,b,o,rag:o.rag}; if(o.rag) say(o.rag,'Whoa!',900,true); haptic(h,0.4,40); } xrRay=null; return; }
+  tapAt(0,0); xrRay=null; haptic(h,0.3,30); }
+function triggerUp(h){ if(laserDrag&&h.handed==='right'){ laserDrag=null; endDrag(); } }
+// ---------- zombies that hunt you ----------
+function vrHead(){ camera.getWorldPosition(_p3); return _p3.clone(); }
+function startVrWave(){ vrWave=true; vrTags=0; const hp=vrHead(); for(let k=0;k<6;k++){ const a=k/6*Math.PI*2+Math.random()*0.4, L=stageInfo().size/2-2, x=Math.max(-L,Math.min(L,hp.x+Math.cos(a)*9)), z=Math.max(-L,Math.min(L,hp.z+Math.sin(a)*9)); const zz=makeRag(zombieSpec(),x,z,0.2); zz.vrHunt=true; zz.zspeed=1.1; }
+  objs.forEach(()=>{}); vrSay('Zombies! Grab a blaster from Weapons and shoot!'); sfx('roar'); if(!handsV.some(h=>h.held&&h.held.weapon)){ const h=handOf('right'); if(h.src){ const w=makeWeapon3('blaster',h.body.position.x,h.body.position.y-0.3,h.body.position.z); } } }
+world.addEventListener('preStep',()=>{ if(!xrOn) return; const now=performance.now(), hp=vrHead();
+  rags.forEach(z=>{ if(!z.vrHunt||!z.alive||(z.frozenT&&now<z.frozenT)||now-z.dragT<200) return; const zp=z.parts.torso.position, dx=hp.x-zp.x, dz=hp.z-zp.z, d=Math.hypot(dx,dz);
+    moveRag(z,dx,dz,(z.zspeed||1.1)*Math.sqrt(z.s)); const f=facingOf(z); for(const n of ['ua_l','ua_r','la_l','la_r']){ const b=z.parts[n], down=b.quaternion.vmult(new CANNON.Vec3(0,-1,0)), ax=down.cross(f); b.angularVelocity.x+=(ax.x*7-b.angularVelocity.x)*0.3; b.angularVelocity.z+=(ax.z*7-b.angularVelocity.z)*0.3; }
+    if(d<0.85&&now>(z.atkT||0)){ z.atkT=now+1500; vrTags++; handsV.forEach(h=>haptic(h,1,150)); flashVR(); vrSay(`A zombie tagged you! (${vrTags})`); say(z,'Gotcha!',900,true); sfx('roar',300); z.list.forEach(b=>{ b.velocity.x-=dx/Math.max(0.1,d)*5; b.velocity.z-=dz/Math.max(0.1,d)*5; b.velocity.y+=2; }); } }); });
+const flashM=new THREE.Mesh(new THREE.SphereGeometry(0.4,12,8),new THREE.MeshBasicMaterial({color:'#ff2a2a',transparent:true,opacity:0,side:THREE.BackSide,depthTest:false})); flashM.renderOrder=999; camera.add(flashM);
+let flashT=0; function flashVR(){ flashT=performance.now(); }
+// ---------- entering and leaving VR ----------
+function placeRig(){ rig.position.set(cam.tx+Math.sin(cam.yaw)*3,0,cam.tz+Math.cos(cam.yaw)*3); rig.rotation.set(0,cam.yaw,0); }
+async function enterVR(){ if(!navigator.xr){ toast('VR works in the Meta Quest Browser. Open this page there!'); return; }
+  let ok=false; try{ ok=await navigator.xr.isSessionSupported('immersive-vr'); }catch(e){}
+  if(!ok){ toast('No VR headset here. Open this page in the Meta Quest Browser!'); return; }
+  try{ const s=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','bounded-floor']}); renderer.xr.setReferenceSpaceType('local-floor'); await renderer.xr.setSession(s); xrSession=s; xrOn=true;
+    if(ctrl3) stopControl3(); if(drive) stopDrive(true); if(game3) endGame3();
+    rig.add(camera); placeRig(); sun.castShadow=false; handOf('right').ctl.add(laser); laser.visible=true; handOf('left').grip.add(menu); menuDirty=true; vrSay('Grip = grab. Trigger = use the tool. Y = menu');
+    s.addEventListener('end',()=>{ xrOn=false; xrSession=null; handsV.forEach(vrRelease); laserDrag=null; endDrag(); scene.add(camera); sun.castShadow=true; laser.visible=false; reticle.visible=false; resize(); toast('Back from VR'); }); sfx('magic');
+  }catch(e){ toast('Could not start VR: '+(e.message||e)); } }
+document.getElementById('bVR').onclick=()=>{ ac(); enterVR(); };
+if(navigator.xr&&navigator.xr.isSessionSupported) navigator.xr.isSessionSupported('immersive-vr').then(ok=>{ if(ok) document.getElementById('bVR').classList.add('on'); }).catch(()=>{});
+// ---------- per-frame VR controls ----------
+let snapped=false;
+function vrTick(now){ if(!xrOn) return; const dt=Math.min(0.05,Math.max(0.005,(now-(vrT||now))/1000))||1/72; vrT=now;
+  const head=vrHead(); camera.getWorldDirection(_d3); const fx=_d3.x, fz=_d3.z, fl=Math.hypot(fx,fz)||1, f={x:fx/fl,z:fz/fl}, right={x:-f.z,z:f.x};
+  handsV.forEach(h=>{ h.grip.getWorldPosition(_p3); h.grip.getWorldQuaternion(_q3); h.vel.copy(_p3).sub(h.prev).divideScalar(dt); h.prev.copy(_p3);
+    h.body.position.set(_p3.x,_p3.y,_p3.z); h.body.quaternion.set(_q3.x,_q3.y,_q3.z,_q3.w); h.body.velocity.set(h.vel.x,h.vel.y,h.vel.z);
+    const gp=h.src&&h.src.gamepad; if(!gp) return; const B=i=>!!(gp.buttons[i]&&gp.buttons[i].pressed), was=h.btn, now2={t:B(0),g:B(1),a:B(4),b:B(5)}; h.btn=now2;
+    if(now2.g&&!was.g) vrGrab(h); if(!now2.g&&was.g) vrRelease(h);
+    if(now2.t&&!was.t) triggerDown(h); if(!now2.t&&was.t) triggerUp(h);
+    if(h.handed==='right'){ if(now2.a&&!was.a){ const T=["drag","poke","boom","heal","del","grow","shrink","copy"], i=T.indexOf(mode.id); pickMode('tool',T[(i+1)%T.length]); vrSay('Tool: '+mode.id); } if(now2.b&&!was.b){ pickMode('tool','boom'); vrSay('Tool: Boom'); } }
+    else { if(now2.b&&!was.b){ menu.visible=!menu.visible; } if(now2.a&&!was.a){ placeRig(); vrSay('Back to the start'); } }
+    const ax=gp.axes.length>=4?gp.axes[2]:gp.axes[0]||0, ay=gp.axes.length>=4?gp.axes[3]:gp.axes[1]||0;
+    if(h.handed==='left'){ if(Math.hypot(ax,ay)>0.15){ rig.position.x+=(right.x*ax+f.x*-ay)*2.4*dt; rig.position.z+=(right.z*ax+f.z*-ay)*2.4*dt; } }
+    else { if(Math.abs(ax)>0.7&&!snapped){ snapped=true; const ang=-Math.sign(ax)*Math.PI/6; const px=head.x, pz=head.z, rx=rig.position.x-px, rz=rig.position.z-pz, c=Math.cos(ang), s=Math.sin(ang); rig.position.x=px+rx*c+rz*s; rig.position.z=pz-rx*s+rz*c; rig.rotation.y+=ang; } if(Math.abs(ax)<0.3) snapped=false;
+      if(Math.abs(ay)>0.25){ if(laserDrag){ laserDrag.dist=Math.max(0.5,Math.min(40,laserDrag.dist-ay*4*dt)); } else rig.position.y=Math.max(0,rig.position.y-ay*3*dt*Math.max(1,rig.position.y/5)); } }
+    if(h.held&&h.held.o.rag) h.held.o.rag.dragT=performance.now();
+    if(h.held&&h.held.weapon&&WEAP3[h.held.o.wk].melee&&h.vel.length()>2.6&&now>(h.swingT||0)){ h.swingT=now+350; const tip=h.held.o.body.position, dir=new CANNON.Vec3(h.vel.x,0,h.vel.z); dir.normalize(); hitArea(tip,0.55,WEAP3[h.held.o.wk].dmg,dir,null); sfx('whoosh'); haptic(h,0.6,40); } });
+  // laser
+  const rh=handOf('right'); if(rh.src){ const R0=handRay(rh); ray.set(R0.o,R0.d); let dist=8, hit=null; if(menu.visible){ const mh=ray.intersectObject(menu,false)[0]; if(mh){ dist=mh.distance; const px=mh.uv.x*512, py=(1-mh.uv.y)*384, k=vrBtns.findIndex(b=>b.rect&&px>=b.rect[0]&&px<=b.rect[0]+b.rect[2]&&py>=b.rect[1]&&py<=b.rect[1]+b.rect[3]); if(k!==vrHover){ vrHover=k; menuDirty=true; } reticle.visible=false; laser.scale.z=dist; laser.position.z=-dist/2; hit='menu'; } }
+    if(!hit){ if(vrHover!==-1){ vrHover=-1; menuDirty=true; } const h2=ray.intersectObjects(pick3,false)[0]; if(h2&&h2.distance<60){ dist=h2.distance; reticle.position.copy(h2.point); reticle.visible=true; } else reticle.visible=false; laser.scale.z=dist; laser.position.z=-dist/2; }
+    if(laserDrag){ const p=R0.o.clone().addScaledVector(R0.d,laserDrag.dist); mouseBody.position.set(p.x,Math.max(0.15,p.y),p.z); if(laserDrag.o.rag) laserDrag.o.rag.dragT=performance.now(); laser.scale.z=laserDrag.dist; laser.position.z=-laserDrag.dist/2; } }
+  if(menuDirty&&menu.visible) drawMenu();
+  const fa=1-(now-flashT)/400; flashM.material.opacity=fa>0?fa*0.45:0;
+  if(vrWave){ const left=[...rags].filter(r=>r.vrHunt).length; if(left===0){ vrWave=false; vrSay(`You beat the zombies! Tagged ${vrTags} times`); sfx('fanfare'); } else if(now-(vrT2||0)>1000){ vrT2=now; vrSay(`Zombies left: ${left}   Tagged: ${vrTags}`); } }
+  cam.tx=head.x; cam.tz=head.z; cam.ty=0; }
+let vrT2=0;
+const _uc3=updateCamera; updateCamera=function(){ vrTick(performance.now()); _uc3(); };
+
 // ============ UI ============
 const ri=(a,b)=>a+Math.floor(Math.random()*(b-a+1));
 let chars=[]; try{ chars=JSON.parse(localStorage.getItem('msp3-chars')||'[]'); }catch(e){}
@@ -1323,9 +1440,9 @@ document.getElementById('bGames').onclick=()=>{ renderGames(); document.getEleme
 document.getElementById('gGo').onclick=()=>{ document.getElementById('gamesSheet').classList.remove('show'); if(game3) endGame3(); if(G3.game==='battle') startBattle3(); else if(G3.game==='maze') startMaze(); else if(G3.game==='zombies') startZombies(); else startGiant(); };
 
 // ============ start ============
-resize(); buildStage(); updateCamera(); buildSlots(); startScene(); requestAnimationFrame(frame);
+resize(); buildStage(); updateCamera(); buildSlots(); startScene(); renderer.setAnimationLoop(frame);
 setTimeout(()=>toast("Drag to throw friends. Drag empty space to turn. Pinch to zoom!"),400);
-window.__m3={get cars(){return cars;},get drones(){return drones3;},makeCar,makeDrone3,startDrive,get drive(){return drive;},startBattle3,setCarSign:v=>CARSIGN=v,get rideStunt(){return rideStunt;},holdK,get shots(){return shots3;},get game3(){return game3;},G3,startMaze,startZombies,startGiant,endGame3,get titans(){return titans;},growThing,startControl3,get ctrl3(){return ctrl3;},makeWeapon3,attach3,useWeapon3,joyV,get monsters(){return monsters;},get machine(){return machine;},rags,objs,world,cam,makeRag,makeItem3,explode,setStage3,get drag(){return drag;},tapAt,hitAt,camera,pullMachine};
+window.__m3={vrGrab,vrRelease,triggerDown,handsV,drawMenu,menuClick,get vrBtns(){return vrBtns;},startVrWave,rig,get cars(){return cars;},get drones(){return drones3;},makeCar,makeDrone3,startDrive,get drive(){return drive;},startBattle3,setCarSign:v=>CARSIGN=v,get rideStunt(){return rideStunt;},holdK,get shots(){return shots3;},get game3(){return game3;},G3,startMaze,startZombies,startGiant,endGame3,get titans(){return titans;},growThing,startControl3,get ctrl3(){return ctrl3;},makeWeapon3,attach3,useWeapon3,joyV,get monsters(){return monsters;},get machine(){return machine;},rags,objs,world,cam,makeRag,makeItem3,explode,setStage3,get drag(){return drag;},tapAt,hitAt,camera,pullMachine};
 
 })();
 </script>
